@@ -1,0 +1,1 @@
+# vis-qr-card-generator
