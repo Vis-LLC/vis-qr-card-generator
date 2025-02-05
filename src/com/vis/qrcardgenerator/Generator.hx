@@ -187,6 +187,8 @@ class Generator {
     private var _generateButton : Dynamic;
     private var _printButton : Dynamic;
     private var _downloadButton : Dynamic;
+    private var _exportButton : Dynamic;
+    private var _sharableLink : Dynamic;
     private var _output : Dynamic;
     private var _addRow : Dynamic;
     private var _element : Dynamic;
@@ -214,22 +216,202 @@ class Generator {
                 element.parentNode.removeChild(element);
             }
             parent.appendChild(element);
+            if (js.Browser.location.hash != null && js.Browser.location.hash != "") {
+                instance().parseApi(js.Browser.location.hash.split("#"));
+            }
         #end
+    }
+
+    private function parseApi(params : Array<String>) : Void {
+        var i : Int = 0;
+        var rowCount : Int = 0;
+        var generate : Bool = false;
+        var print : Bool = false;
+        var download : Bool = false;
+        var hideControls : Bool = false;
+        while (i < params.length) {
+            var paramArray : Array<String> = params[i].split("=");
+            var param : String = StringTools.urlDecode(paramArray[0]);
+            var value : String = null;
+            var label : String = null;
+            if (paramArray.length > 1) {
+                value = StringTools.urlDecode(paramArray[1]);
+                if (value.split("&").length > 1) {
+                    var valueArray : Array<String> = value.split("&");
+                    value = valueArray[0];
+                    label = valueArray[1];
+                }
+            }
+            switch (param) {
+                case "url", "email", "html", "label":
+                    apiAddRow(param, value, label, rowCount);
+                    rowCount++;
+                    break;
+                case "generate":
+                    generate = true;
+                    break;
+                case "print":
+                    generate = true;
+                    print = true;
+                    break;
+                case "download":
+                    generate = true;
+                    download = true;
+                    break;
+                case "hideControls":
+                    hideControls = true;
+                    break;
+                case "cardSize", "printType", "printSide":
+                    apiSetSelect(param, value, generate);
+                    break;
+                case "customWidth", "customHeight", "marginLeft", "marginTop", "marginRight", "marginBottom", "marginVerticalGap", "marginHorizontalGap":
+                    apiSetValue(param, value, generate);
+                    break;
+            }
+            i++;
+        }
+        if (hideControls) {
+            // TODO - hideControls();
+        }
+        if (generate) {
+            generateContent();
+        }
+        if (print) {
+            onPrint();
+        }
+        if (download) {
+            onDownload();
+        }
+    }
+
+    private function apiSetValue(id : String, value : String, generate : Bool) : Void {
+        var element : js.html.InputElement = cast js.Browser.document.getElementById(id);
+        element.value = value;
+        if (generate) {
+            resetOutput();
+        }
+    }
+
+    private function apiSetSelect(id : String, value : String, generate : Bool) : Void {
+        var element : js.html.SelectElement = cast js.Browser.document.getElementById(id);
+        element.value = value;
+        if (generate) {
+            resetOutput();
+        }
+    }
+
+    private function apiAddRow(inputType : String, inputText : String, labelText : String, rowCount : Int) : Void {
+        var rowsContainer = js.Browser.document.getElementById('rowsContainer');
+        if (rowCount > 0) {
+            addRow(rowsContainer);
+        }
+        var row = js.Browser.document.querySelectorAll('.row')[rowCount];
+        var select : js.html.SelectElement = cast js.Syntax.code("{0}.querySelector('select')", row);
+        select.value = inputType;
+        var textArea : js.html.TextAreaElement = cast js.Syntax.code("{0}.querySelector('.inputText')", row);
+        textArea.value = inputText;
+        var label : js.html.InputElement = cast js.Syntax.code("{0}.querySelector('.labelText')", row);
+        label.value = labelText;
+    }
+
+    private function generateMap() : Map<String, Any> {
+        var map = new Map<String, Any>();
+        for (param in generateAPIUrl().split("#")) {
+            var paramArray : Array<String> = param.split("=");
+            var key : String = StringTools.urlDecode(paramArray[0]);
+            var value : String = null;
+            if (paramArray.length > 1) {
+                value = paramArray[1];
+                var valueArray : Array<String> = value.split("&");
+                if (valueArray.length > 1) {
+                    var valueMap = new ValueMap();
+                    valueMap.label = StringTools.urlDecode(valueArray[1]);
+                    valueMap.label = StringTools.urlDecode(valueArray[1]);
+                    valueMap.value = StringTools.urlDecode(valueArray[0]);
+                    map.set(key, valueMap);
+                } else {
+                    map.set(key, value);
+                }
+            } else {
+                map.set(key, null);
+            }
+        }
+        return map;
+    }
+
+    private function readMap(value : Map<String, Any>) : Void {
+        var collection : Array<String> = [];
+        for (key in value.keys()) {
+            var valueMap : Any = cast value.get(key);
+            if (valueMap != null && Std.is(valueMap, ValueMap)) {
+                var valueMap2 : ValueMap = cast valueMap;
+                collection.push(StringTools.urlEncode(key) + "=" + StringTools.urlEncode(valueMap2.value) + "&" + StringTools.urlEncode(valueMap2.label));
+            } else if (valueMap != null) {
+                collection.push(StringTools.urlEncode(key) + "=" + valueMap);
+            } else {
+                collection.push(StringTools.urlEncode(key));
+            }
+        }
+        parseApi(collection);
+    }
+
+    private function generateJson() : String {
+        var v : Dynamic;
+        var m : Map<String, Any> = generateMap();
+        #if js
+            v = js.Syntax.code("{0}.h", m);
+        #else
+            v = m;
+        #end
+        return haxe.Json.stringify(v);
+    }
+
+    private function generateAPIUrl() : String {
+        var url = js.Browser.location.href.split("#")[0] + "#";
+        var rows = js.Browser.document.querySelectorAll('.row');
+        var i : Int = 0;
+        for (row in rows) {
+            var get : String->String = function (id : String) : String {
+                var e : js.html.InputElement = cast js.Syntax.code("{0}.querySelector({1})", row, id);
+                return e.value;
+            };
+            var inputType = get("select");
+            var inputText = StringTools.urlEncode(get(".inputText"));
+            var labelText = StringTools.urlEncode(get(".labelText"));
+            url += inputType + "=" + inputText + "&" + labelText + "#";
+            i++;
+        }
+        url += "cardSize=" + getValueFromId("cardSize") + "#";
+        url += "printType=" + getValueFromId("printType") + "#";
+        url += "printSide=" + getValueFromId("printSide") + "#";
+        if (getValueFromId("cardSize") == "custom") {
+            url += "customWidth=" + getValueFromId("customWidth") + "#";
+            url += "customHeight=" + getValueFromId("customHeight") + "#";
+        }
+        url += "marginLeft=" + getValueFromId("marginLeft") + "#";
+        url += "marginTop=" + getValueFromId("marginTop") + "#";
+        url += "marginRight=" + getValueFromId("marginRight") + "#";
+        url += "marginBottom=" + getValueFromId("marginBottom") + "#";
+        url += "marginVerticalGap=" + getValueFromId("marginVerticalGap") + "#";
+        url += "marginHorizontalGap=" + getValueFromId("marginHorizontalGap") + "#";
+        return url;
     }
 
     private function addRow(rowsContainer : js.html.Element) : Void {
         var row = js.Browser.document.createElement('div');
         row.className = "row";
-        addSelect(row, _inputTypes);
+        addSelect(row, _inputTypes).onchange = selectInputType;
         var textArea : js.html.TextAreaElement = cast js.Browser.document.createElement('textarea');
         textArea.className = "inputText";
         textArea.rows = 2;
-        textArea.placeholder = "Enter your text here...";
+        textArea.placeholder = "Enter your " + _inputTypes[_inputTypes.keys().next()] + " here...";
         row.appendChild(textArea);
+        textArea.maxLength = 600;
         var labelText : js.html.InputElement = cast js.Browser.document.createElement('input');
         labelText.type = "text";
         labelText.className = "labelText";
         labelText.placeholder = "Enter a label...";
+        labelText.maxLength = 600;
         row.appendChild(labelText);
         var removeButton = js.Browser.document.createElement('button');
         removeButton.className = "removeRow";
@@ -265,6 +447,10 @@ class Generator {
             _printButton.addEventListener('click', onPrint);
             _downloadButton = addButton(element, "Download", "downloadBtn", true);
             _downloadButton.addEventListener('click', onDownload);
+            _exportButton = addButton(element, "Export", "exportBtn");
+            _exportButton.addEventListener('click', onExport);
+            _sharableLink = addButton(element, "Get Sharable Link", "sharableLink");
+            _sharableLink.addEventListener('click', onSharableLink);
             element = js.Browser.document.createElement("div");
             element.className = "output";
             element.id = "output";
@@ -331,9 +517,9 @@ class Generator {
         #end
     }
 
-    private function addSelect(element : js.html.Element, options : Map<String, String>, ?id : String) : Void {
+    private function addSelect(element : js.html.Element, options : Map<String, String>, ?id : String) : js.html.OptionElement {
         #if JS_BROWSER
-            var select = js.Browser.document.createElement("select");
+            var select : js.html.OptionElement = cast js.Browser.document.createElement("select");
             if (id != null) {
                 select.id = id;
             }
@@ -344,7 +530,9 @@ class Generator {
                 select.appendChild(option);
             }
             select.onchange = resetOutput;
-            element.appendChild(select);
+            element.appendChild(cast select);
+
+            return select;
         #end
     }
 
@@ -407,12 +595,62 @@ class Generator {
         #end
     }
 
+    private function onExport() : Void {
+        #if JS_BROWSER
+            final blob : Dynamic = js.Syntax.code("new Blob([{0}], {type: {1}})", generateJson(), "application/json");
+            if (cast js.Syntax.code("window.navigator.msSaveOrOpenBlob")) {
+                js.Syntax.code("window.navigator.msSaveBlob({0}, {1})", blob, "qrcard.json");
+            } else {
+                final elem : Dynamic = js.Browser.window.document.createElement('a');
+                elem.href = js.Syntax.code("window.URL.createObjectURL({0})", blob);
+                elem.download = "qrcard.json";
+                js.Browser.document.body.appendChild(elem);
+                elem.click();        
+                js.Browser.document.body.removeChild(elem);
+            }          
+        #end
+    }
+
+    private function onSharableLink() : Void {
+        #if JS_BROWSER
+            var url = generateAPIUrl();
+            var input = cast js.Browser.document.createElement("input");
+            input.type = "text";
+            input.value = url;
+            js.Browser.document.body.appendChild(cast input);
+            input.select();
+            js.Browser.document.execCommand("copy");
+            js.Browser.document.body.removeChild(cast input);
+        #end
+    }
+
     private function resetOutput() : Void {
         #if JS_BROWSER
             _output.innerHTML = '';
             _printButton.disabled = true;
             _downloadButton.disabled = true;
             _generateButton.disabled = false;
+            _exportButton.disabled = true;
+            _sharableLink.disabled = true;
+        #end
+    }
+
+    private function selectInputType(event : js.html.Event) : Void {
+        #if JS_BROWSER
+            var select : js.html.SelectElement = cast event.target;
+            var row : js.html.HtmlElement = cast select.parentElement;
+            var textArea : js.html.TextAreaElement = cast row.querySelector('.inputText');
+            var labelText : js.html.InputElement = cast row.querySelector('.labelText');
+            var value : String = select.value;
+            if (value == 'labelOnly') {
+                textArea.placeholder = "Disabled";
+                textArea.disabled = true;
+            } else {
+                textArea.placeholder = "Enter your " + _inputTypes[value] + " here...";
+                textArea.disabled = false;
+            }
+            
+            resetOutput();
         #end
     }
 
@@ -518,6 +756,12 @@ class Generator {
         } else {
             card.appendChild(label);
         }
+    }
+
+    private function hideControls() : Void {
+        #if JS_BROWSER
+            js.Syntax.code("document.querySelectorAll('input, select, textarea, button').forEach(input => { input.style.display = 'none'; });");
+        #end
     }
 
     private function generateContent() : Void {
@@ -648,6 +892,8 @@ class Generator {
         _printButton.disabled = false;
         _downloadButton.disabled = false;
         _generateButton.disabled = true;
+        _exportButton.disabled = false;
+        _sharableLink.disabled = false;        
     }
 }
 
@@ -659,4 +905,12 @@ class Row {
     public var inputText : String;
     public var preprocessedText : String;
     public var labelText : String;
+}
+
+@:nativeGen
+class ValueMap {
+    public function new() { }
+
+    public var label : String;
+    public var value : String;
 }
